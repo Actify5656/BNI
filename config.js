@@ -22,10 +22,10 @@ const cfg = {
   WAIT_PROFILE_LOAD:  4_000,
 
   // How many End keypresses to scroll-load all lazy results
-  PAGE_DOWN_COUNT: 80,
+  PAGE_DOWN_COUNT: 90,
 
   BROWSER_CHANNEL: 'chrome',
-  HEADLESS: false,
+  HEADLESS: true,
 };
 
 export default cfg;

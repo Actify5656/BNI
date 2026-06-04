@@ -516,6 +516,8 @@ async function scrollResultsContainer(page) {
     const allEls = document.querySelectorAll('*');
     let container = null;
 
+
+
     for (const el of allEls) {
       const style = window.getComputedStyle(el);
       const overflow = style.overflowY;
