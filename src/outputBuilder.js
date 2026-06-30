@@ -2,6 +2,7 @@
 import path              from 'path';
 import cfg               from '../config.js';
 import * as excelHelper  from './excelHelper.js';
+import { registerCategories } from './excelHelper.js';
 import * as fileUtils    from './fileUtils.js';
 
 export function getOutputPath(countryName) {
@@ -11,6 +12,9 @@ export function getOutputPath(countryName) {
 
 export async function createOutputFile(countryName, categories) {
   const filePath = getOutputPath(countryName);
+  // Register all category names FIRST so sheet name mapping is stable
+  // across the entire run — even if categories are added dynamically later
+  registerCategories(filePath, categories);
   await excelHelper.createMultiSheetWorkbook(filePath, categories);
   return filePath;
 }

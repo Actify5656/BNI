@@ -13,9 +13,63 @@ export const COL = {
   Email: 6, Email2: 7, Phone: 8, Phone2: 9, Website: 10, Status: 11,
 };
 
-// ── Sanitize Excel sheet name ─────────────────────────────────────────────────
-export function sanitizeSheetName(name) {
-  return name.replace(/[*?:\\/\[\]]/g, '-').substring(0, 31).trim();
+// ── Sheet name registry — maps full category name → safe Excel sheet name ─────
+// Key: filePath  Value: Map<fullCategoryName, safeSheetName>
+const _sheetNameRegistry = new Map();
+
+export function initSheetRegistry(filePath) {
+  _sheetNameRegistry.set(filePath, new Map());
+}
+
+// Register ALL categories up-front before any sheet is created.
+// Guarantees every full name maps to a unique ≤31-char sheet name.
+export function registerCategories(filePath, categories) {
+  if (!_sheetNameRegistry.has(filePath)) initSheetRegistry(filePath);
+  const registry  = _sheetNameRegistry.get(filePath);
+  const usedNames = new Set();
+
+  for (const cat of categories) {
+    if (registry.has(cat)) continue;
+
+    // Strip illegal chars, collapse whitespace
+    let safe = cat
+      .replace(/[*?:\\/\[\]]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 31)
+      .trim();
+
+    // Deduplicate: if name collides, shorten base + append counter
+    if (usedNames.has(safe.toLowerCase())) {
+      let counter   = 2;
+      const base    = safe.substring(0, 28).trim();
+      let candidate = `${base} ${counter}`;
+      while (usedNames.has(candidate.toLowerCase())) {
+        counter++;
+        candidate = `${base} ${counter}`;
+      }
+      safe = candidate;
+    }
+
+    usedNames.add(safe.toLowerCase());
+    registry.set(cat, safe);
+  }
+}
+
+// Resolve full category name → safe sheet name
+// Always pass filePath so the registry is used; fallback only for legacy callers
+export function sanitizeSheetName(catName, filePath = null) {
+  if (filePath) {
+    const reg = _sheetNameRegistry.get(filePath);
+    if (reg && reg.has(catName)) return reg.get(catName);
+  }
+  // Legacy fallback (no registry available)
+  return catName
+    .replace(/[*?:\\/\[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .substring(0, 31)
+    .trim();
 }
 
 // ── Read all rows from a specific sheet (row 1 = headers) ────────────────────
@@ -23,7 +77,7 @@ export async function readAllRows(filePath, sheetName = null) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(filePath);
   const ws = sheetName
-    ? (wb.getWorksheet(sanitizeSheetName(sheetName)) || wb.worksheets[0])
+    ? (wb.getWorksheet(sanitizeSheetName(sheetName, filePath)) || wb.worksheets[0])
     : wb.worksheets[0];
   if (!ws) return [];
 
@@ -72,10 +126,13 @@ export async function readCategoryCountry(filePath) {
 
 // ── Create multi-sheet workbook ───────────────────────────────────────────────
 export async function createMultiSheetWorkbook(filePath, categories) {
+  // Register ALL categories before creating any sheet so names are stable
+  registerCategories(filePath, categories);
+
   const wb = new ExcelJS.Workbook();
 
   for (const cat of categories) {
-    const ws = wb.addWorksheet(sanitizeSheetName(cat));
+    const ws = wb.addWorksheet(sanitizeSheetName(cat, filePath));
     const headerRow = ws.addRow(HEADERS);
     headerRow.font = { bold: true };
     headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } };
@@ -103,7 +160,7 @@ export async function appendRowsToSheet(filePath, sheetName, members) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(filePath);
 
-  const safeName = sanitizeSheetName(sheetName);
+  const safeName = sanitizeSheetName(sheetName, filePath);
   let ws = wb.getWorksheet(safeName);
   if (!ws) {
     console.warn(`[Excel] Sheet not found: "${safeName}" — creating it`);
@@ -149,7 +206,7 @@ export async function writeCellInSheet(filePath, sheetName, memberName, contacts
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(filePath);
 
-  const safeName = sanitizeSheetName(sheetName);
+  const safeName = sanitizeSheetName(sheetName, filePath);
   const ws = wb.getWorksheet(safeName);
   if (!ws) { console.warn(`[Excel] Sheet not found: ${safeName}`); return; }
 
@@ -175,6 +232,14 @@ export async function writeCellInSheet(filePath, sheetName, memberName, contacts
     return;
   }
 
+  // null contacts = no data found — mark as NoData and leave contact cells blank
+  if (!contacts) {
+    ws.getCell(targetRow, COL.Status).value = 'NoData';
+    await wb.xlsx.writeFile(filePath);
+    console.log(`[Excel] Row ${targetRow} → NoData in "${safeName}"`);
+    return;
+  }
+
   // Write validated contacts
   ws.getCell(targetRow, COL.Email).value   = contacts.email   || 'Not Found';
   ws.getCell(targetRow, COL.Email2).value  = contacts.email2  || '';
@@ -192,7 +257,7 @@ export async function isRowDoneInSheet(filePath, sheetName, memberName) {
   try {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.readFile(filePath);
-    const ws = wb.getWorksheet(sanitizeSheetName(sheetName));
+    const ws = wb.getWorksheet(sanitizeSheetName(sheetName, filePath));
     if (!ws) return false;
 
     let done = false;
